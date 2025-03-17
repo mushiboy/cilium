@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/netip"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 
@@ -230,13 +231,7 @@ func isObsoleteDev(dev string, devices []string) bool {
 	}
 
 	// exclude devices that will still be managed going forward.
-	for _, d := range devices {
-		if dev == d {
-			return false
-		}
-	}
-
-	return true
+	return !slices.Contains(devices, dev)
 }
 
 // removeObsoleteNetdevPrograms removes cil_to_netdev and cil_from_netdev from devices
@@ -758,9 +753,24 @@ func replaceWireguardDatapath(ctx context.Context, device netlink.Link) (err err
 	defer obj.Close()
 
 	linkDir := bpffsDeviceLinksDir(bpf.CiliumPath(), device)
-	if err := attachSKBProgram(device, obj.ToWireguard, symbolToWireguard,
-		linkDir, netlink.HANDLE_MIN_EGRESS, option.Config.EnableTCX); err != nil {
-		return fmt.Errorf("interface %s egress: %w", device, err)
+	// Attach/detach cil_to_wireguard to/from egress.
+	if option.Config.NeedEgressOnWireGuardDevice() {
+		if err := attachSKBProgram(device, obj.ToWireguard, symbolToWireguard,
+			linkDir, netlink.HANDLE_MIN_EGRESS, option.Config.EnableTCX); err != nil {
+			return fmt.Errorf("interface %s egress: %w", device, err)
+		}
+	} else {
+		if err := detachSKBProgram(device, symbolToWireguard,
+			linkDir, netlink.HANDLE_MIN_EGRESS); err != nil {
+			log.WithField("device", device).Error(err)
+		}
+	}
+	// Selectively detach cil_from_netdev from ingress.
+	if !option.Config.NeedBPFHostOnWireGuardDevice() {
+		if err := detachSKBProgram(device, symbolFromHostNetdevEp,
+			linkDir, netlink.HANDLE_MIN_INGRESS); err != nil {
+			log.WithField("device", wgTypes.IfaceName).Error(err)
+		}
 	}
 	if err := commit(); err != nil {
 		return fmt.Errorf("committing bpf pins: %w", err)
