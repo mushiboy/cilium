@@ -309,17 +309,27 @@ func removeObsoleteNetdevPrograms(devices []string) error {
 
 // reloadHostEndpoint (re)attaches programs from bpf_host.c to cilium_host,
 // cilium_net and external (native) devices.
-func reloadHostEndpoint(cfg *datapath.LocalNodeConfiguration, ep datapath.Endpoint, spec *ebpf.CollectionSpec) error {
+func reloadHostEndpoint(cfg *datapath.LocalNodeConfiguration, ep datapath.Endpoint, spec *ebpf.CollectionSpec, stats *metrics.SpanStat) error {
 	// Replace programs on cilium_host.
-	if err := attachCiliumHost(ep, spec); err != nil {
+
+	stats.BpfAttachCiliumHost.Start()
+	err := attachCiliumHost(ep, spec)
+	stats.BpfAttachCiliumHost.End(err == nil)
+	if err != nil {
 		return fmt.Errorf("attaching cilium_host: %w", err)
 	}
 
-	if err := attachCiliumNet(ep, spec); err != nil {
+	stats.BpfAttachCiliumNet.Start()
+	err = attachCiliumNet(ep, spec)
+	stats.BpfAttachCiliumNet.End(err == nil)
+	if err != nil {
 		return fmt.Errorf("attaching cilium_host: %w", err)
 	}
 
-	if err := attachNetworkDevices(cfg, ep, spec); err != nil {
+	stats.BpfAttachCiliumNet.Start()
+	err = attachNetworkDevices(cfg, ep, spec)
+	stats.BpfAttachCiliumNet.End(err == nil)
+	if err != nil {
 		return fmt.Errorf("attaching cilium_host: %w", err)
 	}
 
