@@ -326,9 +326,9 @@ func reloadHostEndpoint(cfg *datapath.LocalNodeConfiguration, ep datapath.Endpoi
 		return fmt.Errorf("attaching cilium_host: %w", err)
 	}
 
-	stats.BpfAttachCiliumNet.Start()
+	stats.BpfAttachNetworkDevices.Start()
 	err = attachNetworkDevices(cfg, ep, spec)
-	stats.BpfAttachCiliumNet.End(err == nil)
+	stats.BpfAttachNetworkDevices.End(err == nil)
 	if err != nil {
 		return fmt.Errorf("attaching cilium_host: %w", err)
 	}
