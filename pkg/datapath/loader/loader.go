@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/hive/cell"
@@ -314,6 +315,7 @@ func reloadHostEndpoint(cfg *datapath.LocalNodeConfiguration, ep datapath.Endpoi
 
 	stats.BpfAttachCiliumHost.Start()
 	err := attachCiliumHost(ep, spec)
+	time.Sleep(1 * time.Second)
 	stats.BpfAttachCiliumHost.End(err == nil)
 	if err != nil {
 		return fmt.Errorf("attaching cilium_host: %w", err)
@@ -612,12 +614,13 @@ func endpointRewrites(ep datapath.EndpointConfiguration) (*config.BPFLXC, map[st
 //
 // spec is modified by the method and it is the callers responsibility to copy
 // it if necessary.
-func reloadEndpoint(ep datapath.Endpoint, spec *ebpf.CollectionSpec) error {
+func reloadEndpoint(ep datapath.Endpoint, spec *ebpf.CollectionSpec, stats *metrics.SpanStat) error {
 	device := ep.InterfaceName()
 
 	co, renames := endpointRewrites(ep)
 
 	var obj lxcObjects
+	stats.BpfLoadAndAssign.Start()
 	commit, err := bpf.LoadAndAssign(&obj, spec, &bpf.CollectionOptions{
 		CollectionOptions: ebpf.CollectionOptions{
 			Maps: ebpf.MapOptions{PinPath: bpf.TCGlobalsPath()},
@@ -625,6 +628,7 @@ func reloadEndpoint(ep datapath.Endpoint, spec *ebpf.CollectionSpec) error {
 		Constants:  co,
 		MapRenames: renames,
 	})
+	stats.BpfLoadAndAssign.End(err == nil)
 	if err != nil {
 		return err
 	}
@@ -637,40 +641,63 @@ func reloadEndpoint(ep datapath.Endpoint, spec *ebpf.CollectionSpec) error {
 	// If the agent dies uncleanly after the first program has been inserted,
 	// the endpoint's connectivity will be partially broken or exhibit undefined
 	// behaviour like missed tail calls or drops.
-	if err := obj.PolicyMap.Update(uint32(ep.GetID()), obj.PolicyProg, ebpf.UpdateAny); err != nil {
+	stats.BpfPolicyMapUpdate.Start()
+	err = obj.PolicyMap.Update(uint32(ep.GetID()), obj.PolicyProg, ebpf.UpdateAny)
+	stats.BpfPolicyMapUpdate.End(err == nil)
+	if err != nil {
 		return fmt.Errorf("inserting endpoint policy program: %w", err)
 	}
-	if err := obj.EgressPolicyMap.Update(uint32(ep.GetID()), obj.EgressPolicyProg, ebpf.UpdateAny); err != nil {
+
+	stats.BpfEgressPolicyMapUpdate.Start()
+	err = obj.EgressPolicyMap.Update(uint32(ep.GetID()), obj.EgressPolicyProg, ebpf.UpdateAny)
+	stats.BpfEgressPolicyMapUpdate.End(err == nil)
+	if err != nil {
 		return fmt.Errorf("inserting endpoint egress policy program: %w", err)
 	}
 
+	stats.BpfRetrieveDevice.Start()
 	iface, err := safenetlink.LinkByName(device)
+	stats.BpfRetrieveDevice.End(err == nil)
 	if err != nil {
 		return fmt.Errorf("retrieving device %s: %w", device, err)
 	}
 
 	linkDir := bpffsEndpointLinksDir(bpf.CiliumPath(), ep)
-	if err := attachSKBProgram(iface, obj.FromContainer, symbolFromEndpoint,
-		linkDir, netlink.HANDLE_MIN_INGRESS, option.Config.EnableTCX); err != nil {
+
+	stats.BpfAttachSKBProgram.Start()
+	err = attachSKBProgram(iface, obj.FromContainer, symbolFromEndpoint,
+		linkDir, netlink.HANDLE_MIN_INGRESS, option.Config.EnableTCX)
+	stats.BpfAttachSKBProgram.End(err == nil)
+	if err != nil {
 		return fmt.Errorf("interface %s ingress: %w", device, err)
 	}
 
 	if ep.RequireEgressProg() {
-		if err := attachSKBProgram(iface, obj.ToContainer, symbolToEndpoint,
-			linkDir, netlink.HANDLE_MIN_EGRESS, option.Config.EnableTCX); err != nil {
+		stats.BpfAttachSKBProgramEgress.Start()
+		err = attachSKBProgram(iface, obj.ToContainer, symbolToEndpoint,
+			linkDir, netlink.HANDLE_MIN_EGRESS, option.Config.EnableTCX)
+		stats.BpfAttachSKBProgramEgress.End(err == nil)
+		if err != nil {
 			return fmt.Errorf("interface %s egress: %w", device, err)
 		}
 	} else {
-		if err := detachSKBProgram(iface, symbolToEndpoint, linkDir, netlink.HANDLE_MIN_EGRESS); err != nil {
+		stats.BpfDetachSKBProgramEgress.Start()
+		err = detachSKBProgram(iface, symbolToEndpoint, linkDir, netlink.HANDLE_MIN_EGRESS)
+		stats.BpfDetachSKBProgramEgress.End(err == nil)
+		if err != nil {
 			log.WithField("device", device).Error(err)
 		}
 	}
 
-	if err := commit(); err != nil {
+	stats.BpfCommit.Start()
+	err = commit()
+	stats.BpfCommit.End(err == nil)
+	if err != nil {
 		return fmt.Errorf("committing bpf pins: %w", err)
 	}
 
 	if ep.RequireEndpointRoute() {
+		stats.BpfEndpointRoute.Start()
 		scopedLog := ep.Logger(subsystem).WithFields(logrus.Fields{
 			logfields.Interface: device,
 		})
@@ -684,6 +711,7 @@ func reloadEndpoint(ep datapath.Endpoint, spec *ebpf.CollectionSpec) error {
 				scopedLog.WithError(err).Warn("Failed to upsert route")
 			}
 		}
+		stats.BpfEndpointRoute.End(true)
 	}
 
 	return nil
@@ -830,7 +858,7 @@ func (l *loader) ReloadDatapath(ctx context.Context, ep datapath.Endpoint, cfg *
 
 	// Reload an lxc endpoint program.
 	stats.BpfLoadProg.Start()
-	err = reloadEndpoint(ep, spec)
+	err = reloadEndpoint(ep, spec, stats)
 	stats.BpfLoadProg.End(err == nil)
 	return hash, err
 }
