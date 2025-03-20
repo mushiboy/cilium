@@ -25,6 +25,9 @@ type SpanStat struct {
 	BpfDetachSKBProgramEgress spanstat.SpanStat
 	BpfCommit                 spanstat.SpanStat
 	BpfEndpointRoute          spanstat.SpanStat
+	BpfLoadCollection         spanstat.SpanStat
+	BpfVerifierError          spanstat.SpanStat
+	BpfAssign                 spanstat.SpanStat
 }
 
 // GetMap returns a map of statistic names to stats
@@ -45,5 +48,8 @@ func (s *SpanStat) GetMap() map[string]*spanstat.SpanStat {
 		"bpfDetachSKBProgramEgress": &s.BpfDetachSKBProgramEgress,
 		"bpfCommit":                 &s.BpfCommit,
 		"bpfEndpointRoute":          &s.BpfEndpointRoute,
+		"bpfLoadCollection":         &s.BpfLoadCollection,
+		"bpfVerifierError":          &s.BpfVerifierError,
+		"bpfAssign":                 &s.BpfAssign,
 	}
 }

@@ -621,13 +621,13 @@ func reloadEndpoint(ep datapath.Endpoint, spec *ebpf.CollectionSpec, stats *metr
 
 	var obj lxcObjects
 	stats.BpfLoadAndAssign.Start()
-	commit, err := bpf.LoadAndAssign(&obj, spec, &bpf.CollectionOptions{
+	commit, err := bpf.LoadAndAssignDebug(&obj, spec, &bpf.CollectionOptions{
 		CollectionOptions: ebpf.CollectionOptions{
 			Maps: ebpf.MapOptions{PinPath: bpf.TCGlobalsPath()},
 		},
 		Constants:  co,
 		MapRenames: renames,
-	})
+	}, stats)
 	stats.BpfLoadAndAssign.End(err == nil)
 	if err != nil {
 		return err

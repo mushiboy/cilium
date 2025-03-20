@@ -14,6 +14,7 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"github.com/cilium/cilium/pkg/datapath/config"
+	"github.com/cilium/cilium/pkg/datapath/loader/metrics"
 )
 
 // LoadCollectionSpec loads the eBPF ELF at the given path and parses it into
@@ -248,6 +249,36 @@ func LoadAndAssign(to any, spec *ebpf.CollectionSpec, opts *CollectionOptions) (
 	if err := coll.Assign(to); err != nil {
 		return nil, fmt.Errorf("assigning eBPF objects to %T: %w", to, err)
 	}
+
+	return commit, nil
+}
+
+// LoadAndAssignDebug for just for testing purposes
+func LoadAndAssignDebug(to any, spec *ebpf.CollectionSpec, opts *CollectionOptions, stats *metrics.SpanStat) (func() error, error) {
+	stats.BpfLoadCollection.Start()
+	coll, commit, err := LoadCollection(spec, opts)
+	stats.BpfLoadCollection.End(err == nil)
+
+	var ve *ebpf.VerifierError
+	if errors.As(err, &ve) {
+		stats.BpfVerifierError.Start()
+		if _, err := fmt.Fprintf(os.Stderr, "Verifier error: %s\nVerifier log: %+v\n", err, ve); err != nil {
+			stats.BpfVerifierError.End(false)
+			return nil, fmt.Errorf("writing verifier log to stderr: %w", err)
+		}
+		stats.BpfVerifierError.End(true)
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("loading eBPF collection into the kernel: %w", err)
+	}
+
+	stats.BpfAssign.Start()
+	if err := coll.Assign(to); err != nil {
+		stats.BpfAssign.End(false)
+		return nil, fmt.Errorf("assigning eBPF objects to %T: %w", to, err)
+	}
+	stats.BpfAssign.End(true)
 
 	return commit, nil
 }
