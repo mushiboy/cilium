@@ -18,6 +18,7 @@ import (
 
 	"github.com/cilium/cilium/pkg/bpf"
 	"github.com/cilium/cilium/pkg/datapath/linux/safenetlink"
+	"github.com/cilium/cilium/pkg/datapath/loader/metrics"
 	"github.com/cilium/cilium/pkg/option"
 )
 
@@ -57,14 +58,124 @@ func attachSKBProgram(device netlink.Link, prog *ebpf.Program, progName, bpffsDi
 	}
 
 	// tcx not available or disabled, fall back to legacy tc.
-	if err := upsertTCProgram(device, prog, progName, parent, option.Config.TCFilterPriority); err != nil {
+	err := upsertTCProgram(device, prog, progName, parent, option.Config.TCFilterPriority)
+	if err != nil {
 		return fmt.Errorf("attaching legacy tc program %s: %w", progName, err)
 	}
 
 	// Legacy tc attached, make sure tcx is detached in case of downgrade.
 	// netkit can only be used in combination with tcx, but never legacy tc,
 	// hence for netkit detaching here would be irrelevant.
-	if err := detachGeneric(bpffsDir, progName, "tcx"); err != nil {
+	err = detachGeneric(bpffsDir, progName, "tcx")
+	if err != nil {
+		return fmt.Errorf("tcx cleanup after attaching legacy tc program %s: %w", progName, err)
+	}
+
+	return nil
+}
+
+func attachSKBProgramDebug(device netlink.Link, prog *ebpf.Program, progName, bpffsDir string, parent uint32, tcxEnabled bool, stats *metrics.SpanStat) error {
+	if prog == nil {
+		return fmt.Errorf("program %s is nil", progName)
+	}
+
+	if tcxEnabled {
+		// If the device is a netkit device, we know that netkit links are
+		// supported, therefore use netkit instead of tcx. For all others like
+		// host devices, rely on tcx.
+		if device.Type() == "netkit" {
+			if err := upsertNetkitProgram(device, prog, progName, bpffsDir, parent); err != nil {
+				return fmt.Errorf("attaching netkit program %s: %w", progName, err)
+			}
+			return nil
+		}
+
+		// Attach using tcx if available. This is seamless on interfaces with
+		// existing tc programs since attaching tcx disables legacy tc evaluation.
+		err := upsertTCXProgram(device, prog, progName, bpffsDir, parent)
+		if err == nil {
+			// Created tcx link, clean up any leftover legacy tc attachments.
+			if err := removeTCFilters(device, parent); err != nil {
+				log.WithError(err).Warnf("Cleaning up legacy tc after attaching tcx program %s", progName)
+			}
+			// Don't fall back to legacy tc.
+			return nil
+		}
+		if !errors.Is(err, link.ErrNotSupported) {
+			// Unrecoverable error, surface to the caller.
+			return fmt.Errorf("attaching tcx program %s: %w", progName, err)
+		}
+	}
+
+	stats.UpsertTCProgram.Start()
+	// tcx not available or disabled, fall back to legacy tc.
+	err := upsertTCProgramDebug(device, prog, progName, parent, option.Config.TCFilterPriority, stats)
+	stats.UpsertTCProgram.End(err == nil)
+	if err != nil {
+		return fmt.Errorf("attaching legacy tc program %s: %w", progName, err)
+	}
+
+	// Legacy tc attached, make sure tcx is detached in case of downgrade.
+	// netkit can only be used in combination with tcx, but never legacy tc,
+	// hence for netkit detaching here would be irrelevant.
+	stats.DetachGenericTC.Start()
+	err = detachGeneric(bpffsDir, progName, "tcx")
+	stats.DetachGenericTC.End(err == nil)
+	if err != nil {
+		return fmt.Errorf("tcx cleanup after attaching legacy tc program %s: %w", progName, err)
+	}
+
+	return nil
+}
+
+func attachSKBProgramEgress(device netlink.Link, prog *ebpf.Program, progName, bpffsDir string, parent uint32, tcxEnabled bool, stats *metrics.SpanStat) error {
+	if prog == nil {
+		return fmt.Errorf("program %s is nil", progName)
+	}
+
+	if tcxEnabled {
+		// If the device is a netkit device, we know that netkit links are
+		// supported, therefore use netkit instead of tcx. For all others like
+		// host devices, rely on tcx.
+		if device.Type() == "netkit" {
+			if err := upsertNetkitProgram(device, prog, progName, bpffsDir, parent); err != nil {
+				return fmt.Errorf("attaching netkit program %s: %w", progName, err)
+			}
+			return nil
+		}
+
+		// Attach using tcx if available. This is seamless on interfaces with
+		// existing tc programs since attaching tcx disables legacy tc evaluation.
+		err := upsertTCXProgram(device, prog, progName, bpffsDir, parent)
+		if err == nil {
+			// Created tcx link, clean up any leftover legacy tc attachments.
+			if err := removeTCFilters(device, parent); err != nil {
+				log.WithError(err).Warnf("Cleaning up legacy tc after attaching tcx program %s", progName)
+			}
+			// Don't fall back to legacy tc.
+			return nil
+		}
+		if !errors.Is(err, link.ErrNotSupported) {
+			// Unrecoverable error, surface to the caller.
+			return fmt.Errorf("attaching tcx program %s: %w", progName, err)
+		}
+	}
+
+	stats.UpsertTCProgramEgress.Start()
+	// tcx not available or disabled, fall back to legacy tc.
+	err := upsertTCProgramEgress(device, prog, progName, parent, option.Config.TCFilterPriority, stats)
+	stats.UpsertTCProgramEgress.End(err == nil)
+	if err != nil {
+		return fmt.Errorf("attaching legacy tc program %s: %w", progName, err)
+	}
+
+	// Legacy tc attached, make sure tcx is detached in case of downgrade.
+	// netkit can only be used in combination with tcx, but never legacy tc,
+	// hence for netkit detaching here would be irrelevant.
+	stats.DetachGenericTCEgress.Start()
+	err = detachGeneric(bpffsDir, progName, "tcx")
+	stats.DetachGenericTCEgress.End(err == nil)
+	if err != nil {
 		return fmt.Errorf("tcx cleanup after attaching legacy tc program %s: %w", progName, err)
 	}
 
@@ -106,7 +217,9 @@ func detachSKBProgram(device netlink.Link, progName, bpffsDir string, parent uin
 // Existing programs with the same name but different priority are detached
 // after attaching the new program.
 func upsertTCProgram(device netlink.Link, prog *ebpf.Program, progName string, parent uint32, prio uint16) error {
-	if err := replaceQdisc(device); err != nil {
+
+	err := replaceQdisc(device)
+	if err != nil {
 		return fmt.Errorf("replacing clsact qdisc for interface %s: %w", device.Attrs().Name, err)
 	}
 
@@ -131,7 +244,100 @@ func upsertTCProgram(device netlink.Link, prog *ebpf.Program, progName string, p
 		DirectAction: true,
 	}
 
-	if err := netlink.FilterReplace(filter); err != nil {
+	errTCFilterReplace := netlink.FilterReplace(filter)
+	if errTCFilterReplace != nil {
+		return fmt.Errorf("replacing tc filter for interface %s: %w", device.Attrs().Name, err)
+	}
+
+	log.Infof("Program %s with priority %d attached to device %s using legacy tc", progName, filter.Attrs().Priority, device.Attrs().Name)
+
+	if err := removeStaleTCFilters(device, parent, prio); err != nil {
+		return fmt.Errorf("removing stale tc filter %s for interface %s: %w", filter.Name, device.Attrs().Name, err)
+	}
+
+	return nil
+}
+
+func upsertTCProgramDebug(device netlink.Link, prog *ebpf.Program, progName string, parent uint32, prio uint16, stats *metrics.SpanStat) error {
+
+	stats.TCReplaceQDisc.Start()
+	err := replaceQdisc(device)
+	stats.TCReplaceQDisc.End(err == nil)
+	if err != nil {
+		return fmt.Errorf("replacing clsact qdisc for interface %s: %w", device.Attrs().Name, err)
+	}
+
+	// Leaving prio at 0 will cause the kernel to assign a priority in the higher
+	// 16-bits region. If this happens, we're unable to read back the value we
+	// specified in the request, i.e. when cleaning up leftover filters with a
+	// different priority. Default to 1 to avoid surprises.
+	if prio == 0 {
+		prio = 1
+	}
+
+	filter := &netlink.BpfFilter{
+		FilterAttrs: netlink.FilterAttrs{
+			LinkIndex: device.Attrs().Index,
+			Parent:    parent,
+			Handle:    1,
+			Protocol:  unix.ETH_P_ALL,
+			Priority:  prio,
+		},
+		Fd:           prog.FD(),
+		Name:         fmt.Sprintf("%s-%s", progName, device.Attrs().Name),
+		DirectAction: true,
+	}
+
+	stats.TCFilterReplace.Start()
+	errTCFilterReplace := netlink.FilterReplaceDebug(filter, stats)
+	stats.TCFilterReplace.End(errTCFilterReplace == nil)
+	if errTCFilterReplace != nil {
+		return fmt.Errorf("replacing tc filter for interface %s: %w", device.Attrs().Name, err)
+	}
+
+	log.Infof("Program %s with priority %d attached to device %s using legacy tc", progName, filter.Attrs().Priority, device.Attrs().Name)
+
+	if err := removeStaleTCFilters(device, parent, prio); err != nil {
+		return fmt.Errorf("removing stale tc filter %s for interface %s: %w", filter.Name, device.Attrs().Name, err)
+	}
+
+	return nil
+}
+
+func upsertTCProgramEgress(device netlink.Link, prog *ebpf.Program, progName string, parent uint32, prio uint16, stats *metrics.SpanStat) error {
+
+	stats.TCReplaceQDiscEgress.Start()
+	err := replaceQdisc(device)
+	stats.TCReplaceQDiscEgress.End(err == nil)
+	if err != nil {
+		return fmt.Errorf("replacing clsact qdisc for interface %s: %w", device.Attrs().Name, err)
+	}
+
+	// Leaving prio at 0 will cause the kernel to assign a priority in the higher
+	// 16-bits region. If this happens, we're unable to read back the value we
+	// specified in the request, i.e. when cleaning up leftover filters with a
+	// different priority. Default to 1 to avoid surprises.
+	if prio == 0 {
+		prio = 1
+	}
+
+	filter := &netlink.BpfFilter{
+		FilterAttrs: netlink.FilterAttrs{
+			LinkIndex: device.Attrs().Index,
+			Parent:    parent,
+			Handle:    1,
+			Protocol:  unix.ETH_P_ALL,
+			Priority:  prio,
+		},
+		Fd:           prog.FD(),
+		Name:         fmt.Sprintf("%s-%s", progName, device.Attrs().Name),
+		DirectAction: true,
+	}
+
+	stats.TCFilterReplaceEgress.Start()
+	errTCFilterReplace := netlink.FilterReplaceEgress(filter, stats)
+	stats.TCFilterReplaceEgress.End(errTCFilterReplace == nil)
+	if errTCFilterReplace != nil {
 		return fmt.Errorf("replacing tc filter for interface %s: %w", device.Attrs().Name, err)
 	}
 

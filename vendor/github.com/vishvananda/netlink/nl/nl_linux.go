@@ -15,6 +15,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/cilium/cilium/pkg/datapath/loader/metrics"
 	"github.com/vishvananda/netns"
 	"golang.org/x/sys/unix"
 )
@@ -518,6 +519,34 @@ func (req *NetlinkRequest) AddRawData(data []byte) {
 // or incomplete.
 func (req *NetlinkRequest) Execute(sockType int, resType uint16) ([][]byte, error) {
 	var res [][]byte
+	err := req.ExecuteIter(sockType, resType, func(msg []byte) bool {
+		res = append(res, msg)
+		return true
+	})
+	if err != nil && !errors.Is(err, ErrDumpInterrupted) {
+		return nil, err
+	}
+	return res, err
+}
+
+func (req *NetlinkRequest) ExecuteDebug(sockType int, resType uint16, stats *metrics.SpanStat) ([][]byte, error) {
+	var res [][]byte
+	stats.TCExecuteIter.Start()
+	defer stats.TCExecuteIter.End(true)
+	err := req.ExecuteIter(sockType, resType, func(msg []byte) bool {
+		res = append(res, msg)
+		return true
+	})
+	if err != nil && !errors.Is(err, ErrDumpInterrupted) {
+		return nil, err
+	}
+	return res, err
+}
+
+func (req *NetlinkRequest) ExecuteEgress(sockType int, resType uint16, stats *metrics.SpanStat) ([][]byte, error) {
+	var res [][]byte
+	stats.TCExecuteIterEgress.Start()
+	defer stats.TCExecuteIterEgress.End(true)
 	err := req.ExecuteIter(sockType, resType, func(msg []byte) bool {
 		res = append(res, msg)
 		return true

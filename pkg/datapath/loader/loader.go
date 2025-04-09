@@ -665,8 +665,8 @@ func reloadEndpoint(ep datapath.Endpoint, spec *ebpf.CollectionSpec, stats *metr
 	linkDir := bpffsEndpointLinksDir(bpf.CiliumPath(), ep)
 
 	stats.BpfAttachSKBProgram.Start()
-	err = attachSKBProgram(iface, obj.FromContainer, symbolFromEndpoint,
-		linkDir, netlink.HANDLE_MIN_INGRESS, option.Config.EnableTCX)
+	err = attachSKBProgramDebug(iface, obj.FromContainer, symbolFromEndpoint,
+		linkDir, netlink.HANDLE_MIN_INGRESS, option.Config.EnableTCX, stats)
 	stats.BpfAttachSKBProgram.End(err == nil)
 	if err != nil {
 		return fmt.Errorf("interface %s ingress: %w", device, err)
@@ -674,8 +674,8 @@ func reloadEndpoint(ep datapath.Endpoint, spec *ebpf.CollectionSpec, stats *metr
 
 	if ep.RequireEgressProg() {
 		stats.BpfAttachSKBProgramEgress.Start()
-		err = attachSKBProgram(iface, obj.ToContainer, symbolToEndpoint,
-			linkDir, netlink.HANDLE_MIN_EGRESS, option.Config.EnableTCX)
+		err = attachSKBProgramEgress(iface, obj.ToContainer, symbolToEndpoint,
+			linkDir, netlink.HANDLE_MIN_EGRESS, option.Config.EnableTCX, stats)
 		stats.BpfAttachSKBProgramEgress.End(err == nil)
 		if err != nil {
 			return fmt.Errorf("interface %s egress: %w", device, err)

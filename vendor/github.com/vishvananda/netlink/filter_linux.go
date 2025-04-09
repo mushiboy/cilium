@@ -9,6 +9,7 @@ import (
 	"net"
 	"syscall"
 
+	"github.com/cilium/cilium/pkg/datapath/loader/metrics"
 	"github.com/vishvananda/netlink/nl"
 	"golang.org/x/sys/unix"
 )
@@ -282,10 +283,25 @@ func FilterReplace(filter Filter) error {
 	return pkgHandle.FilterReplace(filter)
 }
 
+func FilterReplaceDebug(filter Filter, stats *metrics.SpanStat) error {
+	return pkgHandle.FilterReplaceDebug(filter, stats)
+}
+
+func FilterReplaceEgress(filter Filter, stats *metrics.SpanStat) error {
+	return pkgHandle.FilterReplaceEgress(filter, stats)
+}
+
 // FilterReplace will replace a filter.
 // Equivalent to: `tc filter replace $filter`
 func (h *Handle) FilterReplace(filter Filter) error {
 	return h.filterModify(filter, unix.RTM_NEWTFILTER, unix.NLM_F_CREATE)
+}
+func (h *Handle) FilterReplaceDebug(filter Filter, stats *metrics.SpanStat) error {
+	return h.filterModifyDebug(filter, unix.RTM_NEWTFILTER, unix.NLM_F_CREATE, stats)
+}
+
+func (h *Handle) FilterReplaceEgress(filter Filter, stats *metrics.SpanStat) error {
+	return h.filterModifyEgress(filter, unix.RTM_NEWTFILTER, unix.NLM_F_CREATE, stats)
 }
 
 func (h *Handle) filterModify(filter Filter, proto, flags int) error {
@@ -419,6 +435,278 @@ func (h *Handle) filterModify(filter Filter, proto, flags int) error {
 	}
 	req.AddData(options)
 	_, err := req.Execute(unix.NETLINK_ROUTE, 0)
+	return err
+}
+
+func (h *Handle) filterModifyDebug(filter Filter, proto, flags int, stats *metrics.SpanStat) error {
+	req := h.newNetlinkRequest(proto, flags|unix.NLM_F_ACK)
+	base := filter.Attrs()
+	msg := &nl.TcMsg{
+		Family:  nl.FAMILY_ALL,
+		Ifindex: int32(base.LinkIndex),
+		Handle:  base.Handle,
+		Parent:  base.Parent,
+		Info:    MakeHandle(base.Priority, nl.Swap16(base.Protocol)),
+	}
+	req.AddData(msg)
+	if filter.Attrs().Chain != nil {
+		req.AddData(nl.NewRtAttr(nl.TCA_CHAIN, nl.Uint32Attr(*filter.Attrs().Chain)))
+	}
+	req.AddData(nl.NewRtAttr(nl.TCA_KIND, nl.ZeroTerminated(filter.Type())))
+
+	options := nl.NewRtAttr(nl.TCA_OPTIONS, nil)
+
+	switch filter := filter.(type) {
+	case *U32:
+		sel := filter.Sel
+		if sel == nil {
+			// match all
+			sel = &nl.TcU32Sel{
+				Nkeys: 1,
+				Flags: nl.TC_U32_TERMINAL,
+			}
+			sel.Keys = append(sel.Keys, nl.TcU32Key{})
+		}
+
+		if native != networkOrder {
+			// Copy TcU32Sel.
+			cSel := *sel
+			keys := make([]nl.TcU32Key, cap(sel.Keys))
+			copy(keys, sel.Keys)
+			cSel.Keys = keys
+			sel = &cSel
+
+			// Handle the endianness of attributes
+			sel.Offmask = native.Uint16(htons(sel.Offmask))
+			sel.Hmask = native.Uint32(htonl(sel.Hmask))
+			for i, key := range sel.Keys {
+				sel.Keys[i].Mask = native.Uint32(htonl(key.Mask))
+				sel.Keys[i].Val = native.Uint32(htonl(key.Val))
+			}
+		}
+		sel.Nkeys = uint8(len(sel.Keys))
+		options.AddRtAttr(nl.TCA_U32_SEL, sel.Serialize())
+		if filter.ClassId != 0 {
+			options.AddRtAttr(nl.TCA_U32_CLASSID, nl.Uint32Attr(filter.ClassId))
+		}
+		if filter.Divisor != 0 {
+			if (filter.Divisor-1)&filter.Divisor != 0 {
+				return fmt.Errorf("illegal divisor %d. Must be a power of 2", filter.Divisor)
+			}
+			options.AddRtAttr(nl.TCA_U32_DIVISOR, nl.Uint32Attr(filter.Divisor))
+		}
+		if filter.Hash != 0 {
+			options.AddRtAttr(nl.TCA_U32_HASH, nl.Uint32Attr(filter.Hash))
+		}
+		if filter.Link != 0 {
+			options.AddRtAttr(nl.TCA_U32_LINK, nl.Uint32Attr(filter.Link))
+		}
+		if filter.Police != nil {
+			police := options.AddRtAttr(nl.TCA_U32_POLICE, nil)
+			if err := encodePolice(police, filter.Police); err != nil {
+				return err
+			}
+		}
+		actionsAttr := options.AddRtAttr(nl.TCA_U32_ACT, nil)
+		// backwards compatibility
+		if filter.RedirIndex != 0 {
+			filter.Actions = append([]Action{NewMirredAction(filter.RedirIndex)}, filter.Actions...)
+		}
+		if err := EncodeActions(actionsAttr, filter.Actions); err != nil {
+			return err
+		}
+	case *FwFilter:
+		if filter.Mask != 0 {
+			b := make([]byte, 4)
+			native.PutUint32(b, filter.Mask)
+			options.AddRtAttr(nl.TCA_FW_MASK, b)
+		}
+		if filter.InDev != "" {
+			options.AddRtAttr(nl.TCA_FW_INDEV, nl.ZeroTerminated(filter.InDev))
+		}
+		if filter.Police != nil {
+			police := options.AddRtAttr(nl.TCA_FW_POLICE, nil)
+			if err := encodePolice(police, filter.Police); err != nil {
+				return err
+			}
+		}
+		if filter.ClassId != 0 {
+			b := make([]byte, 4)
+			native.PutUint32(b, filter.ClassId)
+			options.AddRtAttr(nl.TCA_FW_CLASSID, b)
+		}
+		actionsAttr := options.AddRtAttr(nl.TCA_FW_ACT, nil)
+		if err := EncodeActions(actionsAttr, filter.Actions); err != nil {
+			return err
+		}
+	case *BpfFilter:
+		var bpfFlags uint32
+		if filter.ClassId != 0 {
+			options.AddRtAttr(nl.TCA_BPF_CLASSID, nl.Uint32Attr(filter.ClassId))
+		}
+		if filter.Fd >= 0 {
+			options.AddRtAttr(nl.TCA_BPF_FD, nl.Uint32Attr((uint32(filter.Fd))))
+		}
+		if filter.Name != "" {
+			options.AddRtAttr(nl.TCA_BPF_NAME, nl.ZeroTerminated(filter.Name))
+		}
+		if filter.DirectAction {
+			bpfFlags |= nl.TCA_BPF_FLAG_ACT_DIRECT
+		}
+		options.AddRtAttr(nl.TCA_BPF_FLAGS, nl.Uint32Attr(bpfFlags))
+	case *MatchAll:
+		actionsAttr := options.AddRtAttr(nl.TCA_MATCHALL_ACT, nil)
+		if err := EncodeActions(actionsAttr, filter.Actions); err != nil {
+			return err
+		}
+		if filter.ClassId != 0 {
+			options.AddRtAttr(nl.TCA_MATCHALL_CLASSID, nl.Uint32Attr(filter.ClassId))
+		}
+	case *Flower:
+		if err := filter.encode(options); err != nil {
+			return err
+		}
+	}
+	req.AddData(options)
+	stats.TCExecute.Start()
+	_, err := req.ExecuteDebug(unix.NETLINK_ROUTE, 0, stats)
+	stats.TCExecute.End(err == nil)
+	return err
+}
+
+func (h *Handle) filterModifyEgress(filter Filter, proto, flags int, stats *metrics.SpanStat) error {
+	req := h.newNetlinkRequest(proto, flags|unix.NLM_F_ACK)
+	base := filter.Attrs()
+	msg := &nl.TcMsg{
+		Family:  nl.FAMILY_ALL,
+		Ifindex: int32(base.LinkIndex),
+		Handle:  base.Handle,
+		Parent:  base.Parent,
+		Info:    MakeHandle(base.Priority, nl.Swap16(base.Protocol)),
+	}
+	req.AddData(msg)
+	if filter.Attrs().Chain != nil {
+		req.AddData(nl.NewRtAttr(nl.TCA_CHAIN, nl.Uint32Attr(*filter.Attrs().Chain)))
+	}
+	req.AddData(nl.NewRtAttr(nl.TCA_KIND, nl.ZeroTerminated(filter.Type())))
+
+	options := nl.NewRtAttr(nl.TCA_OPTIONS, nil)
+
+	switch filter := filter.(type) {
+	case *U32:
+		sel := filter.Sel
+		if sel == nil {
+			// match all
+			sel = &nl.TcU32Sel{
+				Nkeys: 1,
+				Flags: nl.TC_U32_TERMINAL,
+			}
+			sel.Keys = append(sel.Keys, nl.TcU32Key{})
+		}
+
+		if native != networkOrder {
+			// Copy TcU32Sel.
+			cSel := *sel
+			keys := make([]nl.TcU32Key, cap(sel.Keys))
+			copy(keys, sel.Keys)
+			cSel.Keys = keys
+			sel = &cSel
+
+			// Handle the endianness of attributes
+			sel.Offmask = native.Uint16(htons(sel.Offmask))
+			sel.Hmask = native.Uint32(htonl(sel.Hmask))
+			for i, key := range sel.Keys {
+				sel.Keys[i].Mask = native.Uint32(htonl(key.Mask))
+				sel.Keys[i].Val = native.Uint32(htonl(key.Val))
+			}
+		}
+		sel.Nkeys = uint8(len(sel.Keys))
+		options.AddRtAttr(nl.TCA_U32_SEL, sel.Serialize())
+		if filter.ClassId != 0 {
+			options.AddRtAttr(nl.TCA_U32_CLASSID, nl.Uint32Attr(filter.ClassId))
+		}
+		if filter.Divisor != 0 {
+			if (filter.Divisor-1)&filter.Divisor != 0 {
+				return fmt.Errorf("illegal divisor %d. Must be a power of 2", filter.Divisor)
+			}
+			options.AddRtAttr(nl.TCA_U32_DIVISOR, nl.Uint32Attr(filter.Divisor))
+		}
+		if filter.Hash != 0 {
+			options.AddRtAttr(nl.TCA_U32_HASH, nl.Uint32Attr(filter.Hash))
+		}
+		if filter.Link != 0 {
+			options.AddRtAttr(nl.TCA_U32_LINK, nl.Uint32Attr(filter.Link))
+		}
+		if filter.Police != nil {
+			police := options.AddRtAttr(nl.TCA_U32_POLICE, nil)
+			if err := encodePolice(police, filter.Police); err != nil {
+				return err
+			}
+		}
+		actionsAttr := options.AddRtAttr(nl.TCA_U32_ACT, nil)
+		// backwards compatibility
+		if filter.RedirIndex != 0 {
+			filter.Actions = append([]Action{NewMirredAction(filter.RedirIndex)}, filter.Actions...)
+		}
+		if err := EncodeActions(actionsAttr, filter.Actions); err != nil {
+			return err
+		}
+	case *FwFilter:
+		if filter.Mask != 0 {
+			b := make([]byte, 4)
+			native.PutUint32(b, filter.Mask)
+			options.AddRtAttr(nl.TCA_FW_MASK, b)
+		}
+		if filter.InDev != "" {
+			options.AddRtAttr(nl.TCA_FW_INDEV, nl.ZeroTerminated(filter.InDev))
+		}
+		if filter.Police != nil {
+			police := options.AddRtAttr(nl.TCA_FW_POLICE, nil)
+			if err := encodePolice(police, filter.Police); err != nil {
+				return err
+			}
+		}
+		if filter.ClassId != 0 {
+			b := make([]byte, 4)
+			native.PutUint32(b, filter.ClassId)
+			options.AddRtAttr(nl.TCA_FW_CLASSID, b)
+		}
+		actionsAttr := options.AddRtAttr(nl.TCA_FW_ACT, nil)
+		if err := EncodeActions(actionsAttr, filter.Actions); err != nil {
+			return err
+		}
+	case *BpfFilter:
+		var bpfFlags uint32
+		if filter.ClassId != 0 {
+			options.AddRtAttr(nl.TCA_BPF_CLASSID, nl.Uint32Attr(filter.ClassId))
+		}
+		if filter.Fd >= 0 {
+			options.AddRtAttr(nl.TCA_BPF_FD, nl.Uint32Attr((uint32(filter.Fd))))
+		}
+		if filter.Name != "" {
+			options.AddRtAttr(nl.TCA_BPF_NAME, nl.ZeroTerminated(filter.Name))
+		}
+		if filter.DirectAction {
+			bpfFlags |= nl.TCA_BPF_FLAG_ACT_DIRECT
+		}
+		options.AddRtAttr(nl.TCA_BPF_FLAGS, nl.Uint32Attr(bpfFlags))
+	case *MatchAll:
+		actionsAttr := options.AddRtAttr(nl.TCA_MATCHALL_ACT, nil)
+		if err := EncodeActions(actionsAttr, filter.Actions); err != nil {
+			return err
+		}
+		if filter.ClassId != 0 {
+			options.AddRtAttr(nl.TCA_MATCHALL_CLASSID, nl.Uint32Attr(filter.ClassId))
+		}
+	case *Flower:
+		if err := filter.encode(options); err != nil {
+			return err
+		}
+	}
+	req.AddData(options)
+	stats.TCExecuteEgress.Start()
+	_, err := req.ExecuteEgress(unix.NETLINK_ROUTE, 0, stats)
+	stats.TCExecuteEgress.End(err == nil)
 	return err
 }
 
