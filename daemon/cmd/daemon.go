@@ -370,7 +370,7 @@ func newDaemon(ctx context.Context, cleaner *daemonCleanup, params *daemonParams
 		ctx:               ctx,
 		clientset:         params.Clientset,
 		db:                params.DB,
-		buildEndpointSem:  semaphore.NewWeighted(int64(numWorkerThreads())),
+		buildEndpointSem:  semaphore.NewWeighted(int64(numWorkerThreads() * 2)),
 		compilationLock:   params.CompilationLock,
 		mtuConfig:         params.MTU,
 		directRoutingDev:  params.DirectRoutingDevice,
