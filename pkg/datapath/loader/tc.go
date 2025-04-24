@@ -275,6 +275,7 @@ func upsertTCProgramDebug(device netlink.Link, prog *ebpf.Program, progName stri
 		prio = 1
 	}
 
+	stats.TCcreateFilter.Start()
 	filter := &netlink.BpfFilter{
 		FilterAttrs: netlink.FilterAttrs{
 			LinkIndex: device.Attrs().Index,
@@ -287,6 +288,8 @@ func upsertTCProgramDebug(device netlink.Link, prog *ebpf.Program, progName stri
 		Name:         fmt.Sprintf("%s-%s", progName, device.Attrs().Name),
 		DirectAction: true,
 	}
+	var filterErr error
+	stats.TCcreateFilter.End(filterErr == nil)
 
 	stats.TCFilterReplace.Start()
 	errTCFilterReplace := netlink.FilterReplaceDebug(filter, stats)
@@ -297,7 +300,10 @@ func upsertTCProgramDebug(device netlink.Link, prog *ebpf.Program, progName stri
 
 	log.Infof("Program %s with priority %d attached to device %s using legacy tc", progName, filter.Attrs().Priority, device.Attrs().Name)
 
-	if err := removeStaleTCFilters(device, parent, prio); err != nil {
+	stats.TCremoveStaleFilters.Start()
+	err = removeStaleTCFilters(device, parent, prio)
+	stats.TCremoveStaleFilters.End(err == nil)
+	if err != nil {
 		return fmt.Errorf("removing stale tc filter %s for interface %s: %w", filter.Name, device.Attrs().Name, err)
 	}
 

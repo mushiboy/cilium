@@ -40,6 +40,8 @@ type SpanStat struct {
 	TCFilterReplaceEgress     spanstat.SpanStat
 	TCExecuteEgress           spanstat.SpanStat
 	TCExecuteIterEgress       spanstat.SpanStat
+	TCcreateFilter            spanstat.SpanStat
+	TCremoveStaleFilters      spanstat.SpanStat
 }
 
 // GetMap returns a map of statistic names to stats
@@ -75,5 +77,7 @@ func (s *SpanStat) GetMap() map[string]*spanstat.SpanStat {
 		"tcFilterReplaceEgress":     &s.TCFilterReplaceEgress,
 		"tcExecuteEgress":           &s.TCExecuteEgress,
 		"tcExecuteIterEgress":       &s.TCExecuteIterEgress,
+		"tccreateFilter":            &s.TCcreateFilter,
+		"tcremoveStaleFilters":      &s.TCremoveStaleFilters,
 	}
 }
