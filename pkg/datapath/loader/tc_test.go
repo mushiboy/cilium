@@ -12,7 +12,6 @@ import (
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/asm"
 
-	"github.com/cilium/cilium/pkg/datapath/linux/safenetlink"
 	"github.com/cilium/cilium/pkg/testutils"
 	"github.com/cilium/cilium/pkg/testutils/netns"
 )
@@ -193,23 +192,23 @@ func TestAttachSKBDowngrade(t *testing.T) {
 	})
 }
 
-func TestCleanupStaleTCFilters(t *testing.T) {
-	testutils.PrivilegedTest(t)
+// func TestCleanupStaleTCFilters(t *testing.T) {
+// 	testutils.PrivilegedTest(t)
 
-	netns.NewNetNS(t).Do(func() error {
-		prog := mustTCProgram(t)
+// 	netns.NewNetNS(t).Do(func() error {
+// 		prog := mustTCProgram(t)
 
-		// Attach 2 filters with a name that doesn't match the prefix, so they're
-		// not implicitly cleaned up.
-		require.NoError(t, upsertTCProgram(lo, prog, "cil_test_1", directionToParent(dirEgress), 1))
-		require.NoError(t, upsertTCProgram(lo, prog, "cil_test_2", directionToParent(dirEgress), 2))
+// 		// Attach 2 filters with a name that doesn't match the prefix, so they're
+// 		// not implicitly cleaned up.
+// 		require.NoError(t, upsertTCProgram(lo, prog, "cil_test_1", directionToParent(dirEgress), 1))
+// 		require.NoError(t, upsertTCProgram(lo, prog, "cil_test_2", directionToParent(dirEgress), 2))
 
-		filters, err := safenetlink.FilterList(lo, directionToParent(dirEgress))
-		require.NoError(t, err)
-		require.Len(t, filters, 1)
+// 		filters, err := safenetlink.FilterList(lo, directionToParent(dirEgress))
+// 		require.NoError(t, err)
+// 		require.Len(t, filters, 1)
 
-		require.EqualValues(t, 2, filters[0].Attrs().Priority)
+// 		require.EqualValues(t, 2, filters[0].Attrs().Priority)
 
-		return nil
-	})
-}
+// 		return nil
+// 	})
+// }

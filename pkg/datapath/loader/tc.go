@@ -251,9 +251,9 @@ func upsertTCProgram(device netlink.Link, prog *ebpf.Program, progName string, p
 
 	log.Infof("Program %s with priority %d attached to device %s using legacy tc", progName, filter.Attrs().Priority, device.Attrs().Name)
 
-	if err := removeStaleTCFilters(device, parent, prio); err != nil {
-		return fmt.Errorf("removing stale tc filter %s for interface %s: %w", filter.Name, device.Attrs().Name, err)
-	}
+	// if err := removeStaleTCFilters(device, parent, prio); err != nil {
+	// 	return fmt.Errorf("removing stale tc filter %s for interface %s: %w", filter.Name, device.Attrs().Name, err)
+	// }
 
 	return nil
 }
@@ -300,12 +300,12 @@ func upsertTCProgramDebug(device netlink.Link, prog *ebpf.Program, progName stri
 
 	log.Infof("Program %s with priority %d attached to device %s using legacy tc", progName, filter.Attrs().Priority, device.Attrs().Name)
 
-	stats.TCremoveStaleFilters.Start()
-	err = removeStaleTCFilters(device, parent, prio)
-	stats.TCremoveStaleFilters.End(err == nil)
-	if err != nil {
-		return fmt.Errorf("removing stale tc filter %s for interface %s: %w", filter.Name, device.Attrs().Name, err)
-	}
+	// stats.TCremoveStaleFilters.Start()
+	// err = removeStaleTCFilters(device, parent, prio)
+	// stats.TCremoveStaleFilters.End(err == nil)
+	// if err != nil {
+	// 	return fmt.Errorf("removing stale tc filter %s for interface %s: %w", filter.Name, device.Attrs().Name, err)
+	// }
 
 	return nil
 }
@@ -349,46 +349,46 @@ func upsertTCProgramEgress(device netlink.Link, prog *ebpf.Program, progName str
 
 	log.Infof("Program %s with priority %d attached to device %s using legacy tc", progName, filter.Attrs().Priority, device.Attrs().Name)
 
-	if err := removeStaleTCFilters(device, parent, prio); err != nil {
-		return fmt.Errorf("removing stale tc filter %s for interface %s: %w", filter.Name, device.Attrs().Name, err)
-	}
+	// if err := removeStaleTCFilters(device, parent, prio); err != nil {
+	// 	return fmt.Errorf("removing stale tc filter %s for interface %s: %w", filter.Name, device.Attrs().Name, err)
+	// }
 
 	return nil
 }
 
-// removeStaleTCFilters removes all Cilium tc bpf filters from the given
-// device with a different priority than the given new priority.
-func removeStaleTCFilters(device netlink.Link, parent uint32, newPrio uint16) error {
-	filters, err := safenetlink.FilterList(device, parent)
-	if err != nil {
-		return err
-	}
+// // removeStaleTCFilters removes all Cilium tc bpf filters from the given
+// // device with a different priority than the given new priority.
+// func removeStaleTCFilters(device netlink.Link, parent uint32, newPrio uint16) error {
+// 	filters, err := safenetlink.FilterList(device, parent)
+// 	if err != nil {
+// 		return err
+// 	}
 
-	for _, f := range filters {
-		old, ok := f.(*netlink.BpfFilter)
-		if !ok {
-			continue
-		}
+// 	for _, f := range filters {
+// 		old, ok := f.(*netlink.BpfFilter)
+// 		if !ok {
+// 			continue
+// 		}
 
-		// Don't touch filters belonging to other programs.
-		if !isCiliumFilter(old) {
-			continue
-		}
+// 		// Don't touch filters belonging to other programs.
+// 		if !isCiliumFilter(old) {
+// 			continue
+// 		}
 
-		// Don't remove filters with the new priority.
-		if old.Priority == newPrio {
-			continue
-		}
+// 		// Don't remove filters with the new priority.
+// 		if old.Priority == newPrio {
+// 			continue
+// 		}
 
-		if err := netlink.FilterDel(f); err != nil {
-			return err
-		}
+// 		if err := netlink.FilterDel(f); err != nil {
+// 			return err
+// 		}
 
-		log.Infof("Deleted stale tc bpf filter %s with priority %d on device %s", old.Name, old.Priority, device.Attrs().Name)
-	}
+// 		log.Infof("Deleted stale tc bpf filter %s with priority %d on device %s", old.Name, old.Priority, device.Attrs().Name)
+// 	}
 
-	return nil
-}
+// 	return nil
+// }
 
 // removeTCFilters removes all tc filters from the given interface.
 // Direction is passed as netlink.HANDLE_MIN_{INGRESS,EGRESS} via parent.
