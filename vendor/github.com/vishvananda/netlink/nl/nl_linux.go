@@ -533,10 +533,10 @@ func (req *NetlinkRequest) ExecuteDebug(sockType int, resType uint16, stats *met
 	var res [][]byte
 	stats.TCExecuteIter.Start()
 	defer stats.TCExecuteIter.End(true)
-	err := req.ExecuteIter(sockType, resType, func(msg []byte) bool {
+	err := req.ExecuteIterDebug(sockType, resType, func(msg []byte) bool {
 		res = append(res, msg)
 		return true
-	})
+	}, stats)
 	if err != nil && !errors.Is(err, ErrDumpInterrupted) {
 		return nil, err
 	}
@@ -603,6 +603,151 @@ func (req *NetlinkRequest) ExecuteIter(sockType int, resType uint16, f func(msg 
 	} else {
 		s.Lock()
 		defer s.Unlock()
+	}
+
+	if err := s.Send(req); err != nil {
+		return err
+	}
+
+	pid, err := s.GetPid()
+	if err != nil {
+		return err
+	}
+
+	dumpIntr := false
+
+done:
+	for {
+		msgs, from, err := s.Receive()
+		if err != nil {
+			return err
+		}
+		if from.Pid != PidKernel {
+			return fmt.Errorf("Wrong sender portid %d, expected %d", from.Pid, PidKernel)
+		}
+		for _, m := range msgs {
+			if m.Header.Seq != req.Seq {
+				if sharedSocket {
+					continue
+				}
+				return fmt.Errorf("Wrong Seq nr %d, expected %d", m.Header.Seq, req.Seq)
+			}
+			if m.Header.Pid != pid {
+				continue
+			}
+
+			if m.Header.Flags&unix.NLM_F_DUMP_INTR != 0 {
+				dumpIntr = true
+			}
+
+			if m.Header.Type == unix.NLMSG_DONE || m.Header.Type == unix.NLMSG_ERROR {
+				// NLMSG_DONE might have no payload, if so assume no error.
+				if m.Header.Type == unix.NLMSG_DONE && len(m.Data) == 0 {
+					break done
+				}
+
+				native := NativeEndian()
+				errno := int32(native.Uint32(m.Data[0:4]))
+				if errno == 0 {
+					break done
+				}
+				var err error
+				err = syscall.Errno(-errno)
+
+				unreadData := m.Data[4:]
+				if m.Header.Flags&unix.NLM_F_ACK_TLVS != 0 && len(unreadData) > syscall.SizeofNlMsghdr {
+					// Skip the echoed request message.
+					echoReqH := (*syscall.NlMsghdr)(unsafe.Pointer(&unreadData[0]))
+					unreadData = unreadData[nlmAlignOf(int(echoReqH.Len)):]
+
+					// Annotate `err` using nlmsgerr attributes.
+					for len(unreadData) >= syscall.SizeofRtAttr {
+						attr := (*syscall.RtAttr)(unsafe.Pointer(&unreadData[0]))
+						attrData := unreadData[syscall.SizeofRtAttr:attr.Len]
+
+						switch attr.Type {
+						case NLMSGERR_ATTR_MSG:
+							err = fmt.Errorf("%w: %s", err, unix.ByteSliceToString(attrData))
+						default:
+							// TODO: handle other NLMSGERR_ATTR types
+						}
+
+						unreadData = unreadData[rtaAlignOf(int(attr.Len)):]
+					}
+				}
+
+				return err
+			}
+			if resType != 0 && m.Header.Type != resType {
+				continue
+			}
+			if cont := f(m.Data); !cont {
+				// Drain the rest of the messages from the kernel but don't
+				// pass them to the iterator func.
+				f = dummyMsgIterFunc
+			}
+			if m.Header.Flags&unix.NLM_F_MULTI == 0 {
+				break done
+			}
+		}
+	}
+	if dumpIntr {
+		return ErrDumpInterrupted
+	}
+	return nil
+}
+
+func (req *NetlinkRequest) ExecuteIterDebug(sockType int, resType uint16, f func(msg []byte) bool, stats *metrics.SpanStat) error {
+	var (
+		s   *NetlinkSocket
+		err error
+	)
+
+	if req.Sockets != nil {
+		if sh, ok := req.Sockets[sockType]; ok {
+			s = sh.Socket
+			req.Seq = atomic.AddUint32(&sh.Seq, 1)
+		}
+	}
+	sharedSocket := s != nil
+
+	if s == nil {
+		if stats != nil {
+			stats.NetlinkSocketCreated = true
+		}
+		stats.TemporaryNetlinkSocketTime.Start()
+		s, err = getNetlinkSocket(sockType)
+		if err != nil {
+			return err
+		}
+
+		if err := s.SetSendTimeout(&SocketTimeoutTv); err != nil {
+			return err
+		}
+		if err := s.SetReceiveTimeout(&SocketTimeoutTv); err != nil {
+			return err
+		}
+		if EnableErrorMessageReporting {
+			if err := s.SetExtAck(true); err != nil {
+				return err
+			}
+		}
+
+		defer func() {
+			s.Close()
+			stats.TemporaryNetlinkSocketTime.End(true)
+		}()
+	} else {
+		stats.NetlinkSocketReused = true
+		if stats != nil {
+			stats.NetlinkSocketCreated = true
+		}
+		stats.NetlinkLock.Start()
+		s.Lock()
+		defer func() {
+			s.Unlock()
+			stats.NetlinkLock.End(true)
+		}()
 	}
 
 	if err := s.Send(req); err != nil {
