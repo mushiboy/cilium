@@ -716,7 +716,9 @@ func (req *NetlinkRequest) ExecuteIterDebug(sockType int, resType uint16, f func
 			stats.NetlinkSocketCreated = true
 		}
 		stats.NetlinkTemporarySocketTime.Start()
+		stats.NetlinkTemporarySocketCreationTime.Start()
 		s, err = getNetlinkSocket(sockType)
+		stats.NetlinkTemporarySocketCreationTime.End(true)
 		if err != nil {
 			return err
 		}
