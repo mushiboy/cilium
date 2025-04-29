@@ -581,6 +581,9 @@ func (e *Endpoint) updateRegenerationStatistics(ctx *regenerationContext, err er
 		for field, stat := range stats.datapathRealization.GetMap() {
 			fields[field] = stat.Total()
 		}
+		for field, stat := range stats.datapathRealization.GetBoolFlags() {
+			fields[field] = stat
+		}
 		scopedLog = scopedLog.WithFields(fields)
 	}
 

@@ -715,7 +715,7 @@ func (req *NetlinkRequest) ExecuteIterDebug(sockType int, resType uint16, f func
 		if stats != nil {
 			stats.NetlinkSocketCreated = true
 		}
-		stats.TemporaryNetlinkSocketTime.Start()
+		stats.NetlinkTemporarySocketTime.Start()
 		s, err = getNetlinkSocket(sockType)
 		if err != nil {
 			return err
@@ -735,7 +735,7 @@ func (req *NetlinkRequest) ExecuteIterDebug(sockType int, resType uint16, f func
 
 		defer func() {
 			s.Close()
-			stats.TemporaryNetlinkSocketTime.End(true)
+			stats.NetlinkTemporarySocketTime.End(true)
 		}()
 	} else {
 		stats.NetlinkSocketReused = true

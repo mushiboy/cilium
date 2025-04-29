@@ -43,7 +43,7 @@ type SpanStat struct {
 	TCcreateFilter             spanstat.SpanStat
 	TCremoveStaleFilters       spanstat.SpanStat
 	NetlinkSocketCreated       bool
-	TemporaryNetlinkSocketTime spanstat.SpanStat
+	NetlinkTemporarySocketTime spanstat.SpanStat
 	NetlinkSocketReused        bool
 	NetlinkLock                spanstat.SpanStat
 }
@@ -51,37 +51,45 @@ type SpanStat struct {
 // GetMap returns a map of statistic names to stats
 func (s *SpanStat) GetMap() map[string]*spanstat.SpanStat {
 	return map[string]*spanstat.SpanStat{
-		"bpfCompilation":            &s.BpfCompilation,
-		"bpfWaitForELF":             &s.BpfWaitForELF,
-		"bpfLoadProg":               &s.BpfLoadProg,
-		"bpfAttachCiliumHost":       &s.BpfAttachCiliumHost,
-		"bpfAttachCiliumNet":        &s.BpfAttachCiliumNet,
-		"bpfAttachNetworkDevices":   &s.BpfAttachNetworkDevices,
-		"bpfLoadAndAssign":          &s.BpfLoadAndAssign,
-		"bpfPolicyMapUpdate":        &s.BpfPolicyMapUpdate,
-		"bpfEgressPolicyMapUpdate":  &s.BpfEgressPolicyMapUpdate,
-		"bpfRetrieveDevice":         &s.BpfRetrieveDevice,
-		"bpfAttachSKBProgram":       &s.BpfAttachSKBProgram,
-		"bpfAttachSKBProgramEgress": &s.BpfAttachSKBProgramEgress,
-		"bpfDetachSKBProgramEgress": &s.BpfDetachSKBProgramEgress,
-		"bpfCommit":                 &s.BpfCommit,
-		"bpfEndpointRoute":          &s.BpfEndpointRoute,
-		"bpfLoadCollection":         &s.BpfLoadCollection,
-		"bpfVerifierError":          &s.BpfVerifierError,
-		"bpfAssign":                 &s.BpfAssign,
-		"upsertTCProgram":           &s.UpsertTCProgram,
-		"detachGenericTC":           &s.DetachGenericTC,
-		"tcReplaceQDisc":            &s.TCReplaceQDisc,
-		"tcFilterReplace":           &s.TCFilterReplace,
-		"tcExecute":                 &s.TCExecute,
-		"tcExecuteIter":             &s.TCExecuteIter,
-		"upsertTCProgramEgress":     &s.UpsertTCProgramEgress,
-		"detachGenericTCEgress":     &s.DetachGenericTCEgress,
-		"tcReplaceQDiscEgress":      &s.TCReplaceQDiscEgress,
-		"tcFilterReplaceEgress":     &s.TCFilterReplaceEgress,
-		"tcExecuteEgress":           &s.TCExecuteEgress,
-		"tcExecuteIterEgress":       &s.TCExecuteIterEgress,
-		"tccreateFilter":            &s.TCcreateFilter,
-		"tcremoveStaleFilters":      &s.TCremoveStaleFilters,
+		"bpfCompilation":             &s.BpfCompilation,
+		"bpfWaitForELF":              &s.BpfWaitForELF,
+		"bpfLoadProg":                &s.BpfLoadProg,
+		"bpfAttachCiliumHost":        &s.BpfAttachCiliumHost,
+		"bpfAttachCiliumNet":         &s.BpfAttachCiliumNet,
+		"bpfAttachNetworkDevices":    &s.BpfAttachNetworkDevices,
+		"bpfLoadAndAssign":           &s.BpfLoadAndAssign,
+		"bpfPolicyMapUpdate":         &s.BpfPolicyMapUpdate,
+		"bpfEgressPolicyMapUpdate":   &s.BpfEgressPolicyMapUpdate,
+		"bpfRetrieveDevice":          &s.BpfRetrieveDevice,
+		"bpfAttachSKBProgram":        &s.BpfAttachSKBProgram,
+		"bpfAttachSKBProgramEgress":  &s.BpfAttachSKBProgramEgress,
+		"bpfDetachSKBProgramEgress":  &s.BpfDetachSKBProgramEgress,
+		"bpfCommit":                  &s.BpfCommit,
+		"bpfEndpointRoute":           &s.BpfEndpointRoute,
+		"bpfLoadCollection":          &s.BpfLoadCollection,
+		"bpfVerifierError":           &s.BpfVerifierError,
+		"bpfAssign":                  &s.BpfAssign,
+		"upsertTCProgram":            &s.UpsertTCProgram,
+		"detachGenericTC":            &s.DetachGenericTC,
+		"tcReplaceQDisc":             &s.TCReplaceQDisc,
+		"tcFilterReplace":            &s.TCFilterReplace,
+		"tcExecute":                  &s.TCExecute,
+		"tcExecuteIter":              &s.TCExecuteIter,
+		"upsertTCProgramEgress":      &s.UpsertTCProgramEgress,
+		"detachGenericTCEgress":      &s.DetachGenericTCEgress,
+		"tcReplaceQDiscEgress":       &s.TCReplaceQDiscEgress,
+		"tcFilterReplaceEgress":      &s.TCFilterReplaceEgress,
+		"tcExecuteEgress":            &s.TCExecuteEgress,
+		"tcExecuteIterEgress":        &s.TCExecuteIterEgress,
+		"tccreateFilter":             &s.TCcreateFilter,
+		"tcremoveStaleFilters":       &s.TCremoveStaleFilters,
+		"netlinkTemporarySocketTime": &s.NetlinkTemporarySocketTime,
+		"netlinkLock":                &s.NetlinkLock,
+	}
+}
+func (s *SpanStat) GetBoolFlags() map[string]int {
+	return map[string]int{
+		"netlinkSocketCreated": map[bool]int{false: 0, true: 1}[s.NetlinkSocketCreated],
+		"netlinkSocketReused":  map[bool]int{false: 0, true: 1}[s.NetlinkSocketReused],
 	}
 }
