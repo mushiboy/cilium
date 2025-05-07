@@ -47,6 +47,12 @@ type SpanStat struct {
 	NetlinkSocketReused                bool
 	NetlinkLock                        spanstat.SpanStat
 	NetlinkTemporarySocketCreationTime spanstat.SpanStat
+	NetlinkSeqNumber                   uint32
+	NetlinkRDMSGSeqNumber              uint32
+	NetlinkSeqNumberEgress             uint32
+	NetlinkERMsgSeqNumber              uint32
+	NetlinkSeqNumberQDisc              uint32
+	NetlinkSeqNumberQdiscEgress        uint32
 }
 
 // GetMap returns a map of statistic names to stats
@@ -89,9 +95,20 @@ func (s *SpanStat) GetMap() map[string]*spanstat.SpanStat {
 		"netlinkTemporarySocketCreationTime": &s.NetlinkTemporarySocketCreationTime,
 	}
 }
-func (s *SpanStat) GetBoolFlags() map[string]int {
-	return map[string]int{
-		"netlinkSocketCreated": map[bool]int{false: 0, true: 1}[s.NetlinkSocketCreated],
-		"netlinkSocketReused":  map[bool]int{false: 0, true: 1}[s.NetlinkSocketReused],
+func (s *SpanStat) GetBoolFlags() map[string]*bool {
+	return map[string]*bool{
+		"netlinkSocketCreated": &s.NetlinkSocketCreated,
+		"netlinkSocketReused":  &s.NetlinkSocketReused,
+	}
+}
+
+func (s *SpanStat) GetIntFlags() map[string]*uint32 {
+	return map[string]*uint32{
+		"netlinkSeqNumber":            &s.NetlinkSeqNumber,
+		"netlinkRDMSGSeqNumber":       &s.NetlinkRDMSGSeqNumber,
+		"netlinkSeqNumberEgress":      &s.NetlinkSeqNumberEgress,
+		"netlinkERMsgSeqNumber":       &s.NetlinkERMsgSeqNumber,
+		"netlinkSeqNumberQDisc":       &s.NetlinkSeqNumberQDisc,
+		"netlinkSeqNumberQdiscEgress": &s.NetlinkSeqNumberQdiscEgress,
 	}
 }

@@ -711,6 +711,8 @@ func (req *NetlinkRequest) ExecuteIterDebug(sockType int, resType uint16, f func
 	}
 	sharedSocket := s != nil
 
+	stats.NetlinkSeqNumber = req.Seq
+
 	if s == nil {
 		if stats != nil {
 			stats.NetlinkSocketCreated = true

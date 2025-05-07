@@ -261,7 +261,7 @@ func upsertTCProgram(device netlink.Link, prog *ebpf.Program, progName string, p
 func upsertTCProgramDebug(device netlink.Link, prog *ebpf.Program, progName string, parent uint32, prio uint16, stats *metrics.SpanStat) error {
 
 	stats.TCReplaceQDisc.Start()
-	err := replaceQdisc(device)
+	err := replaceQdiscDebug(device, stats)
 	stats.TCReplaceQDisc.End(err == nil)
 	if err != nil {
 		return fmt.Errorf("replacing clsact qdisc for interface %s: %w", device.Attrs().Name, err)
@@ -313,7 +313,7 @@ func upsertTCProgramDebug(device netlink.Link, prog *ebpf.Program, progName stri
 func upsertTCProgramEgress(device netlink.Link, prog *ebpf.Program, progName string, parent uint32, prio uint16, stats *metrics.SpanStat) error {
 
 	stats.TCReplaceQDiscEgress.Start()
-	err := replaceQdisc(device)
+	err := replaceQdiscEgressDebug(device, stats)
 	stats.TCReplaceQDiscEgress.End(err == nil)
 	if err != nil {
 		return fmt.Errorf("replacing clsact qdisc for interface %s: %w", device.Attrs().Name, err)
@@ -441,6 +441,36 @@ func replaceQdisc(link netlink.Link) error {
 	}
 
 	return netlink.QdiscReplace(qdisc)
+}
+
+func replaceQdiscDebug(link netlink.Link, stats *metrics.SpanStat) error {
+	attrs := netlink.QdiscAttrs{
+		LinkIndex: link.Attrs().Index,
+		Handle:    netlink.MakeHandle(0xffff, 0),
+		Parent:    netlink.HANDLE_CLSACT,
+	}
+
+	qdisc := &netlink.GenericQdisc{
+		QdiscAttrs: attrs,
+		QdiscType:  qdiscClsact,
+	}
+
+	return netlink.QdiscReplaceDebug(qdisc, stats)
+}
+
+func replaceQdiscEgressDebug(link netlink.Link, stats *metrics.SpanStat) error {
+	attrs := netlink.QdiscAttrs{
+		LinkIndex: link.Attrs().Index,
+		Handle:    netlink.MakeHandle(0xffff, 0),
+		Parent:    netlink.HANDLE_CLSACT,
+	}
+
+	qdisc := &netlink.GenericQdisc{
+		QdiscAttrs: attrs,
+		QdiscType:  qdiscClsact,
+	}
+
+	return netlink.QdiscReplaceEgressDebug(qdisc, stats)
 }
 
 func isCiliumFilter(filter *netlink.BpfFilter) bool {

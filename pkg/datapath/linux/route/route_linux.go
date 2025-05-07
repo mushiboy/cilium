@@ -15,6 +15,7 @@ import (
 
 	"github.com/cilium/cilium/pkg/datapath/linux/linux_defaults"
 	"github.com/cilium/cilium/pkg/datapath/linux/safenetlink"
+	"github.com/cilium/cilium/pkg/datapath/loader/metrics"
 	"github.com/cilium/cilium/pkg/time"
 )
 
@@ -239,6 +240,58 @@ func Upsert(route Route) error {
 	var nexthopRouteCreated bool
 
 	link, err := safenetlink.LinkByName(route.Device)
+	if err != nil {
+		return fmt.Errorf("unable to lookup interface %s: %w", route.Device, err)
+	}
+
+	// Can't add local routes to an interface that's down ('lo' in new netns).
+	if link.Attrs().OperState == netlink.OperDown {
+		if err := netlink.LinkSetUp(link); err != nil {
+			return fmt.Errorf("unable to set interface up: %w", err)
+		}
+	}
+
+	routerNet := route.getNexthopAsIPNet()
+	if routerNet != nil {
+		if _, err := replaceNexthopRoute(route, link, routerNet); err != nil {
+			return fmt.Errorf("unable to add nexthop route: %w", err)
+		}
+
+		nexthopRouteCreated = true
+	}
+
+	routeSpec := route.getNetlinkRoute()
+	routeSpec.LinkIndex = link.Attrs().Index
+
+	err = fmt.Errorf("routeReplace not called yet")
+
+	// Workaround: See description of this function
+	for i := 0; err != nil && i < RouteReplaceMaxTries; i++ {
+		err = netlink.RouteReplace(&routeSpec)
+		if err == nil {
+			break
+		}
+		time.Sleep(RouteReplaceRetryInterval)
+	}
+
+	if err != nil {
+		if nexthopRouteCreated {
+			if err2 := deleteNexthopRoute(route, link, routerNet); err2 != nil {
+				// TODO: If this fails, we may want to add some retry logic.
+				log.WithError(err2).
+					Errorf("unable to clean up nexthop route following failure to replace route")
+			}
+		}
+		return err
+	}
+
+	return nil
+}
+
+func UpsertERDebug(route Route, stats *metrics.SpanStat) error {
+	var nexthopRouteCreated bool
+
+	link, err := safenetlink.LinkByNameERDebug(route.Device, stats)
 	if err != nil {
 		return fmt.Errorf("unable to lookup interface %s: %w", route.Device, err)
 	}

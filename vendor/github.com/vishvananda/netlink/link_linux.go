@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"unsafe"
 
+	"github.com/cilium/cilium/pkg/datapath/loader/metrics"
 	"github.com/vishvananda/netlink/nl"
 	"github.com/vishvananda/netns"
 	"golang.org/x/sys/unix"
@@ -1851,6 +1852,14 @@ func LinkByName(name string) (Link, error) {
 	return pkgHandle.LinkByName(name)
 }
 
+func LinkByNameERDebug(name string, stats *metrics.SpanStat) (Link, error) {
+	return pkgHandle.LinkByNameERDebug(name, stats)
+}
+
+func LinkByNameRDDebug(name string, stats *metrics.SpanStat) (Link, error) {
+	return pkgHandle.LinkByNameRDDebug(name, stats)
+}
+
 // LinkByName finds a link by name and returns a pointer to the object.
 //
 // If the kernel doesn't support IFLA_IFNAME, this method will fall back to
@@ -1874,6 +1883,70 @@ func (h *Handle) LinkByName(name string) (Link, error) {
 		nameData = nl.NewRtAttr(unix.IFLA_ALT_IFNAME, nl.ZeroTerminated(name))
 	}
 	req.AddData(nameData)
+
+	link, err := execGetLink(req)
+	if err == unix.EINVAL {
+		// older kernels don't support looking up via IFLA_IFNAME
+		// so fall back to dumping all links
+		h.lookupByDump = true
+		return h.linkByNameDump(name)
+	}
+
+	return link, err
+}
+
+func (h *Handle) LinkByNameERDebug(name string, stats *metrics.SpanStat) (Link, error) {
+	if h.lookupByDump {
+		return h.linkByNameDump(name)
+	}
+
+	req := h.newNetlinkRequest(unix.RTM_GETLINK, unix.NLM_F_ACK)
+
+	msg := nl.NewIfInfomsg(unix.AF_UNSPEC)
+	req.AddData(msg)
+
+	attr := nl.NewRtAttr(unix.IFLA_EXT_MASK, nl.Uint32Attr(nl.RTEXT_FILTER_VF))
+	req.AddData(attr)
+
+	nameData := nl.NewRtAttr(unix.IFLA_IFNAME, nl.ZeroTerminated(name))
+	if len(name) > 15 {
+		nameData = nl.NewRtAttr(unix.IFLA_ALT_IFNAME, nl.ZeroTerminated(name))
+	}
+	req.AddData(nameData)
+
+	stats.NetlinkERMsgSeqNumber = req.Seq
+
+	link, err := execGetLink(req)
+	if err == unix.EINVAL {
+		// older kernels don't support looking up via IFLA_IFNAME
+		// so fall back to dumping all links
+		h.lookupByDump = true
+		return h.linkByNameDump(name)
+	}
+
+	return link, err
+}
+
+func (h *Handle) LinkByNameRDDebug(name string, stats *metrics.SpanStat) (Link, error) {
+	if h.lookupByDump {
+		return h.linkByNameDump(name)
+	}
+
+	req := h.newNetlinkRequest(unix.RTM_GETLINK, unix.NLM_F_ACK)
+
+	msg := nl.NewIfInfomsg(unix.AF_UNSPEC)
+	req.AddData(msg)
+
+	attr := nl.NewRtAttr(unix.IFLA_EXT_MASK, nl.Uint32Attr(nl.RTEXT_FILTER_VF))
+	req.AddData(attr)
+
+	nameData := nl.NewRtAttr(unix.IFLA_IFNAME, nl.ZeroTerminated(name))
+	if len(name) > 15 {
+		nameData = nl.NewRtAttr(unix.IFLA_ALT_IFNAME, nl.ZeroTerminated(name))
+	}
+	req.AddData(nameData)
+
+	stats.NetlinkRDMSGSeqNumber = req.Seq
 
 	link, err := execGetLink(req)
 	if err == unix.EINVAL {

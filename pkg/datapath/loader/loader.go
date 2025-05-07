@@ -129,6 +129,17 @@ func upsertEndpointRoute(ep datapath.Endpoint, ip net.IPNet) error {
 	return route.Upsert(endpointRoute)
 }
 
+func upsertEndpointRouteDebug(ep datapath.Endpoint, ip net.IPNet, stats *metrics.SpanStat) error {
+	endpointRoute := route.Route{
+		Prefix: ip,
+		Device: ep.InterfaceName(),
+		Scope:  netlink.SCOPE_LINK,
+		Proto:  linux_defaults.RTProto,
+	}
+
+	return route.UpsertERDebug(endpointRoute, stats)
+}
+
 func removeEndpointRoute(ep datapath.Endpoint, ip net.IPNet) error {
 	return route.Delete(route.Route{
 		Prefix: ip,
@@ -656,7 +667,7 @@ func reloadEndpoint(ep datapath.Endpoint, spec *ebpf.CollectionSpec, stats *metr
 	}
 
 	stats.BpfRetrieveDevice.Start()
-	iface, err := safenetlink.LinkByName(device)
+	iface, err := safenetlink.LinkByNameRDDebug(device, stats)
 	stats.BpfRetrieveDevice.End(err == nil)
 	if err != nil {
 		return fmt.Errorf("retrieving device %s: %w", device, err)
@@ -702,7 +713,7 @@ func reloadEndpoint(ep datapath.Endpoint, spec *ebpf.CollectionSpec, stats *metr
 			logfields.Interface: device,
 		})
 		if ip := ep.IPv4Address(); ip.IsValid() {
-			if err := upsertEndpointRoute(ep, *netipx.AddrIPNet(ip)); err != nil {
+			if err := upsertEndpointRouteDebug(ep, *netipx.AddrIPNet(ip), stats); err != nil {
 				scopedLog.WithError(err).Warn("Failed to upsert route")
 			}
 		}

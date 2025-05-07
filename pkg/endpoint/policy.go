@@ -584,6 +584,10 @@ func (e *Endpoint) updateRegenerationStatistics(ctx *regenerationContext, err er
 		for field, stat := range stats.datapathRealization.GetBoolFlags() {
 			fields[field] = stat
 		}
+
+		for field, stat := range stats.datapathRealization.GetIntFlags() {
+			fields[field] = *stat
+		}
 		scopedLog = scopedLog.WithFields(fields)
 	}
 

@@ -11,6 +11,7 @@ import (
 	"github.com/vishvananda/netlink"
 	"github.com/vishvananda/netlink/nl"
 
+	"github.com/cilium/cilium/pkg/datapath/loader/metrics"
 	"github.com/cilium/cilium/pkg/resiliency"
 	"github.com/cilium/cilium/pkg/time"
 )
@@ -143,6 +144,18 @@ func GTPPDPList() ([]*netlink.PDP, error) {
 func LinkByName(name string) (netlink.Link, error) {
 	return WithRetryResult(func() (netlink.Link, error) {
 		return netlink.LinkByName(name)
+	})
+}
+
+func LinkByNameERDebug(name string, stats *metrics.SpanStat) (netlink.Link, error) {
+	return WithRetryResult(func() (netlink.Link, error) {
+		return netlink.LinkByNameERDebug(name, stats)
+	})
+}
+
+func LinkByNameRDDebug(name string, stats *metrics.SpanStat) (netlink.Link, error) {
+	return WithRetryResult(func() (netlink.Link, error) {
+		return netlink.LinkByNameRDDebug(name, stats)
 	})
 }
 

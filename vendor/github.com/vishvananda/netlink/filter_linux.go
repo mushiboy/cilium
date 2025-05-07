@@ -704,6 +704,7 @@ func (h *Handle) filterModifyEgress(filter Filter, proto, flags int, stats *metr
 		}
 	}
 	req.AddData(options)
+	stats.NetlinkSeqNumberEgress = req.Seq
 	stats.TCExecuteEgress.Start()
 	_, err := req.ExecuteEgress(unix.NETLINK_ROUTE, 0, stats)
 	stats.TCExecuteEgress.End(err == nil)

@@ -9,6 +9,7 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/cilium/cilium/pkg/datapath/loader/metrics"
 	"github.com/vishvananda/netlink/nl"
 	"golang.org/x/sys/unix"
 )
@@ -113,6 +114,13 @@ func (h *Handle) QdiscChange(qdisc Qdisc) error {
 func QdiscReplace(qdisc Qdisc) error {
 	return pkgHandle.QdiscReplace(qdisc)
 }
+func QdiscReplaceDebug(qdisc Qdisc, stats *metrics.SpanStat) error {
+	return pkgHandle.QdiscReplaceDebug(qdisc, stats)
+}
+
+func QdiscReplaceEgressDebug(qdisc Qdisc, stats *metrics.SpanStat) error {
+	return pkgHandle.QdiscReplaceEgressDebug(qdisc, stats)
+}
 
 // QdiscReplace will replace a qdisc to the system.
 // Equivalent to: `tc qdisc replace $qdisc`
@@ -122,6 +130,20 @@ func (h *Handle) QdiscReplace(qdisc Qdisc) error {
 		unix.RTM_NEWQDISC,
 		unix.NLM_F_CREATE|unix.NLM_F_REPLACE,
 		qdisc)
+}
+
+func (h *Handle) QdiscReplaceDebug(qdisc Qdisc, stats *metrics.SpanStat) error {
+	return h.qdiscModifyDebug(
+		unix.RTM_NEWQDISC,
+		unix.NLM_F_CREATE|unix.NLM_F_REPLACE,
+		qdisc, stats)
+}
+
+func (h *Handle) QdiscReplaceEgressDebug(qdisc Qdisc, stats *metrics.SpanStat) error {
+	return h.qdiscModifyEgressDebug(
+		unix.RTM_NEWQDISC,
+		unix.NLM_F_CREATE|unix.NLM_F_REPLACE,
+		qdisc, stats)
 }
 
 // QdiscAdd will add a qdisc to the system.
@@ -157,6 +179,50 @@ func (h *Handle) qdiscModify(cmd, flags int, qdisc Qdisc) error {
 		}
 	}
 
+	_, err := req.Execute(unix.NETLINK_ROUTE, 0)
+	return err
+}
+
+func (h *Handle) qdiscModifyEgressDebug(cmd, flags int, qdisc Qdisc, stats *metrics.SpanStat) error {
+	req := h.newNetlinkRequest(cmd, flags|unix.NLM_F_ACK)
+	base := qdisc.Attrs()
+	msg := &nl.TcMsg{
+		Family:  nl.FAMILY_ALL,
+		Ifindex: int32(base.LinkIndex),
+		Handle:  base.Handle,
+		Parent:  base.Parent,
+	}
+	req.AddData(msg)
+
+	// When deleting don't bother building the rest of the netlink payload
+	if cmd != unix.RTM_DELQDISC {
+		if err := qdiscPayload(req, qdisc); err != nil {
+			return err
+		}
+	}
+	stats.NetlinkSeqNumberQdiscEgress = req.Seq
+	_, err := req.Execute(unix.NETLINK_ROUTE, 0)
+	return err
+}
+
+func (h *Handle) qdiscModifyDebug(cmd, flags int, qdisc Qdisc, stats *metrics.SpanStat) error {
+	req := h.newNetlinkRequest(cmd, flags|unix.NLM_F_ACK)
+	base := qdisc.Attrs()
+	msg := &nl.TcMsg{
+		Family:  nl.FAMILY_ALL,
+		Ifindex: int32(base.LinkIndex),
+		Handle:  base.Handle,
+		Parent:  base.Parent,
+	}
+	req.AddData(msg)
+
+	// When deleting don't bother building the rest of the netlink payload
+	if cmd != unix.RTM_DELQDISC {
+		if err := qdiscPayload(req, qdisc); err != nil {
+			return err
+		}
+	}
+	stats.NetlinkSeqNumberQDisc = req.Seq
 	_, err := req.Execute(unix.NETLINK_ROUTE, 0)
 	return err
 }
